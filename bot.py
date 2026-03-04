@@ -80,9 +80,13 @@ TOOLS = [
         "function": {
             "name": "search_web",
             "description": (
-                "Tìm kiếm thông tin trên internet khi cần dữ liệu thời sự, tin tức mới nhất, "
-                "giá cả, thời tiết, sự kiện, hoặc bất kỳ thông tin nào có thể thay đổi theo thời gian. "
-                "Dùng khi câu hỏi liên quan đến sự kiện hiện tại hoặc thông tin cần cập nhật."
+                "Tìm kiếm thông tin trên internet KHI VÀ CHỈ KHI thực sự cần dữ liệu realtime. "
+                "CHỈ dùng cho: tin tức mới (trong vài ngày gần đây), giá cả/tỷ giá hiện tại, "
+                "thời tiết hôm nay, kết quả thể thao gần đây, sự kiện đang diễn ra. "
+                "KHÔNG dùng cho: kiến thức chung, lịch sử, khoa học, toán học, định nghĩa, "
+                "giải thích khái niệm, lập trình, ngôn ngữ. "
+                "LƯU Ý: Tìm kiếm có thể thất bại do mạng - nếu không cần thiết tuyệt đối thì "
+                "hãy trả lời từ kiến thức có sẵn thay vì tìm kiếm."
             ),
             "parameters": {
                 "type": "object",
@@ -224,15 +228,24 @@ def _do_search(query: str, max_results: int = 5) -> str:
     if elapsed < _MIN_SEARCH_INTERVAL:
         time.sleep(_MIN_SEARCH_INTERVAL - elapsed)
 
-    max_retries = 2
+    max_retries = 3
     for attempt in range(max_retries):
         try:
-            with DDGS() as ddgs:
+            # Thử với nhiều cấu hình khác nhau
+            ddgs_params = {}
+            if attempt == 0:
+                ddgs_params = {"timeout": 20}
+            elif attempt == 1:
+                ddgs_params = {"timeout": 30, "proxies": None}
+            else:
+                ddgs_params = {"timeout": 40}
+            
+            with DDGS(**ddgs_params) as ddgs:
                 results = list(ddgs.text(query, max_results=max_results))
             _last_search_time = time.time()
 
             if not results:
-                return "Không tìm thấy kết quả nào."
+                return "SEARCH_EMPTY"
 
             lines = []
             for r in results:
@@ -241,15 +254,19 @@ def _do_search(query: str, max_results: int = 5) -> str:
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Search error (attempt {attempt + 1}): {error_msg}")
-            if "Ratelimit" in error_msg and attempt < max_retries - 1:
-                wait = 5
-                logger.info(f"Rate limited, chờ {wait}s...")
+            logger.error(f"Search error (attempt {attempt + 1}/{max_retries}): {error_msg}")
+            
+            # Retry với timeout hoặc ratelimit
+            if attempt < max_retries - 1:
+                wait = 2 + (attempt * 2)  # Tăng dần thời gian chờ: 2s, 4s, 6s
+                logger.info(f"Đợi {wait}s trước khi thử lại...")
                 time.sleep(wait)
                 continue
-            return "Tìm kiếm thất bại."
-
-    return "Tìm kiếm thất bại."
+            
+            # Attempt cuối cùng thất bại - return error code
+            return "SEARCH_FAILED"
+    
+    return "SEARCH_FAILED"
 
 
 async def web_search(query: str, max_results: int = 6) -> str:
@@ -391,7 +408,20 @@ async def chat_with_ai(
                 elif fn_name == "search_web":
                     query = args.get("query", user_message)
                     logger.info(f"🔍 Tìm kiếm lần {current_round}: {query}")
-                    result = await web_search(query, max_results=6)
+                    search_result = await web_search(query, max_results=6)
+                    
+                    # Xử lý khi search thất bại
+                    if search_result == "SEARCH_FAILED":
+                        result = (
+                            "Tìm kiếm thất bại do vấn đề kết nối hoặc timeout. "
+                            "Vui lòng trả lời dựa trên kiến thức có sẵn của bạn, "
+                            "hoặc thông báo cho người dùng rằng không thể tìm kiếm được lúc này "
+                            "và khuyên họ thử lại sau."
+                        )
+                    elif search_result == "SEARCH_EMPTY":
+                        result = "Không tìm thấy kết quả nào cho truy vấn này."
+                    else:
+                        result = search_result
 
                 elif fn_name == "calculate":
                     expression = args.get("expression", "")
