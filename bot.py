@@ -80,19 +80,19 @@ TOOLS = [
         "function": {
             "name": "search_web",
             "description": (
-                "Tìm kiếm thông tin trên internet KHI VÀ CHỈ KHI thực sự cần dữ liệu realtime. "
-                "CHỈ dùng cho: tin tức mới (trong vài ngày gần đây), giá cả/tỷ giá hiện tại, "
-                "thời tiết hôm nay, kết quả thể thao gần đây, sự kiện đang diễn ra. "
-                "KHÔNG dùng cho: kiến thức chung, lịch sử, khoa học, toán học, định nghĩa. "
-                "LƯU Ý: Tìm kiếm có thể thất bại do rate limit - nếu thất bại, hãy hướng dẫn "
-                "người dùng cách tra cứu thủ công thay vì nói 'tìm kiếm thất bại'."
+                "CẢNH BÁO: Tool này dễ bị rate limit - CHỈ dùng khi THỰC SỰ cần thiết! "
+                "CHỈ search cho: giá cả/tỷ giá HÔM NAY, tin tức TRONG 1-2 NGÀY GẦN ĐÂY, "
+                "thời tiết HÔM NAY, sự kiện ĐANG diễn ra. "
+                "TUYỆT ĐỐI KHÔNG search cho: kiến thức chung, lịch sử, khoa học, địa lý, "
+                "định nghĩa, giải thích, cách làm, hướng dẫn, lập trình. "
+                "Với những thứ KHÔNG phải realtime → trả lời từ kiến thức có sẵn, ĐỪNG search!"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Từ khoá tìm kiếm bằng tiếng Việt hoặc tiếng Anh",
+                        "description": "Từ khoá tìm kiếm ngắn gọn, rõ ràng",
                     }
                 },
                 "required": ["query"],
@@ -204,12 +204,18 @@ THÔNG TIN THỜI GIAN HIỆN TẠI:
 Sử dụng thông tin này khi người dùng hỏi về thời gian, ngày tháng, hoặc cần tính toán dựa trên thời gian.
 ---
 
-HƯỚNG DẪN KHI TÌM KIẾM WEB THẤT BẠI:
-Tính năng search_web CÓ THỂ thất bại do rate limit hoặc vấn đề mạng.
+HƯỚNG DẪN KHI TÌM KIẾM WEB:
+Tính năng search_web có thể bị rate limit nếu dùng quá nhiều.
+
+NGUYÊN TẮC QUAN TRỌNG - HẠN CHẾ SEARCH TỐI ĐA:
+1. CHỈ search khi THỰC SỰ CẦN thông tin realtime trong vài ngày gần đây
+2. Ưu tiên trả lời từ kiến thức có sẵn trước
+3. Với câu hỏi kiến thức CHUNG (lịch sử, khoa học, địa lý, định nghĩa) → KHÔNG search
+4. Chỉ search cho: giá cả HÔM NAY, tin tức TRONG 1-2 NGÀY, thời tiết HÔM NAY
 
 Khi nhận được kết quả "SEARCH_FAILED" hoặc "SEARCH_EMPTY":
 1. KHÔNG nói "tìm kiếm thất bại" khô khan
-2. Thành thật thông báo: "Em không tra được mạng lúc này do hệ thống đang giới hạn em"
+2. Thành thật thông báo: "Em không tra được mạng lúc này"
 3. Hướng dẫn cách tra cứu thủ công cụ thể:
    - Giá vàng: "Chị Google 'giá vàng SJC hôm nay' hoặc vào sjc.com.vn / pnj.com.vn nha"
    - Tỷ giá: "Chị tra trên vietcombank.com.vn hoặc Google 'tỷ giá USD VND' nha"
@@ -232,14 +238,15 @@ VÍ DỤ TRẢ LỜI TỐT:
 
 
 _last_search_time: float = 0.0
-_MIN_SEARCH_INTERVAL = 3.0
-_search_executor = ThreadPoolExecutor(max_workers=3)
+_MIN_SEARCH_INTERVAL = 10.0  # Tăng từ 3s lên 10s để tránh rate limit
+_search_executor = ThreadPoolExecutor(max_workers=1)  # Giảm từ 3 xuống 1 để search tuần tự
 
 
 def _do_search(query: str, max_results: int = 5) -> str:
     """Chạy DuckDuckGo search trong thread riêng, không block event loop."""
     global _last_search_time
 
+    # Đợi ít nhất 10 giây giữa các lần search
     elapsed = time.time() - _last_search_time
     if elapsed < _MIN_SEARCH_INTERVAL:
         time.sleep(_MIN_SEARCH_INTERVAL - elapsed)
@@ -247,17 +254,25 @@ def _do_search(query: str, max_results: int = 5) -> str:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Thử với nhiều cấu hình khác nhau
-            ddgs_params = {}
+            # Tăng timeout và thử với cấu hình khác nhau
             if attempt == 0:
-                ddgs_params = {"timeout": 20}
+                timeout = 25
+                wait_before = 0
             elif attempt == 1:
-                ddgs_params = {"timeout": 30, "proxies": None}
+                timeout = 30
+                wait_before = 5  # Đợi 5s trước lần thử 2
             else:
-                ddgs_params = {"timeout": 40}
+                timeout = 40
+                wait_before = 10  # Đợi 10s trước lần thử 3
             
-            with DDGS(**ddgs_params) as ddgs:
+            if wait_before > 0:
+                logger.info(f"Đợi {wait_before}s trước khi thử lại...")
+                time.sleep(wait_before)
+            
+            # Thử search với timeout cao
+            with DDGS(timeout=timeout) as ddgs:
                 results = list(ddgs.text(query, max_results=max_results))
+            
             _last_search_time = time.time()
 
             if not results:
@@ -265,21 +280,26 @@ def _do_search(query: str, max_results: int = 5) -> str:
 
             lines = []
             for r in results:
-                lines.append(f"- **{r.get('title', '')}**: {r.get('body', '')} ({r.get('href', '')})")
+                title = r.get('title', '')
+                body = r.get('body', '')
+                href = r.get('href', '')
+                if title or body:  # Chỉ thêm nếu có nội dung
+                    lines.append(f"- **{title}**: {body} ({href})")
+            
+            if not lines:
+                return "SEARCH_EMPTY"
+            
             return "\n".join(lines)
 
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Search error (attempt {attempt + 1}/{max_retries}): {error_msg}")
             
-            # Retry với timeout hoặc ratelimit
+            # Nếu chưa phải lần cuối, tiếp tục thử
             if attempt < max_retries - 1:
-                wait = 2 + (attempt * 2)  # Tăng dần thời gian chờ: 2s, 4s, 6s
-                logger.info(f"Đợi {wait}s trước khi thử lại...")
-                time.sleep(wait)
                 continue
             
-            # Attempt cuối cùng thất bại - return error code
+            # Lần cuối cũng thất bại
             return "SEARCH_FAILED"
     
     return "SEARCH_FAILED"
