@@ -4,6 +4,8 @@ import base64
 import logging
 import asyncio
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from typing import Optional, Tuple
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 BOT_NAME = os.getenv("BOT_NAME", "Tí Nị")
 BOT_PERSONALITY = os.getenv(
     "BOT_PERSONALITY",
@@ -53,10 +56,32 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_current_time",
+            "description": (
+                "Lấy thông tin thời gian hiện tại chính xác. "
+                "Dùng khi người dùng hỏi về giờ, ngày, tháng, năm, thứ hiện tại, "
+                "hoặc cần biết thời gian để tính toán, so sánh."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": "Múi giờ (mặc định: Asia/Ho_Chi_Minh cho Việt Nam)",
+                        "enum": ["Asia/Ho_Chi_Minh", "Asia/Bangkok", "Asia/Singapore", "UTC"],
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_web",
             "description": (
                 "Tìm kiếm thông tin trên internet khi cần dữ liệu thời sự, tin tức mới nhất, "
-                "giá cả, thời tiết, hoặc bất kỳ thông tin nào có thể thay đổi theo thời gian. "
+                "giá cả, thời tiết, sự kiện, hoặc bất kỳ thông tin nào có thể thay đổi theo thời gian. "
                 "Dùng khi câu hỏi liên quan đến sự kiện hiện tại hoặc thông tin cần cập nhật."
             ),
             "parameters": {
@@ -68,6 +93,27 @@ TOOLS = [
                     }
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": (
+                "Tính toán biểu thức toán học phức tạp. "
+                "Hỗ trợ: +, -, *, /, **, (), sqrt, sin, cos, tan, log, exp, pi, e. "
+                "Dùng khi cần tính toán chính xác thay vì ước lượng."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "Biểu thức toán học cần tính (ví dụ: '2**10 + 50', 'sqrt(144)')",
+                    }
+                },
+                "required": ["expression"],
             },
         },
     },
@@ -103,14 +149,65 @@ def load_md_file(filename: str) -> str:
     return ""
 
 
+def get_current_datetime_vn() -> dict:
+    """Lấy thông tin thời gian hiện tại tại Việt Nam."""
+    try:
+        tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    except:
+        # Fallback nếu không có zoneinfo
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=7))
+    
+    now = datetime.now(tz)
+    
+    weekdays_vn = {
+        0: "Thứ Hai",
+        1: "Thứ Ba", 
+        2: "Thứ Tư",
+        3: "Thứ Năm",
+        4: "Thứ Sáu",
+        5: "Thứ Bảy",
+        6: "Chủ Nhật"
+    }
+    
+    return {
+        "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "date": now.strftime("%d/%m/%Y"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": weekdays_vn[now.weekday()],
+        "year": now.year,
+        "month": now.month,
+        "day": now.day,
+        "hour": now.hour,
+        "minute": now.minute,
+        "timezone": "Asia/Ho_Chi_Minh (UTC+7)"
+    }
+
+
 def get_system_prompt() -> str:
     soul = load_md_file("soul.md")
     knowledge = load_md_file("knowledge.md")
-    parts = []
+    
+    # Thêm thông tin thời gian hiện tại vào system prompt
+    current_time = get_current_datetime_vn()
+    time_context = f"""
+---
+THÔNG TIN THỜI GIAN HIỆN TẠI:
+- Ngày giờ: {current_time['datetime']}
+- Ngày: {current_time['date']} ({current_time['weekday']})
+- Giờ: {current_time['time']}
+- Múi giờ: {current_time['timezone']}
+
+Sử dụng thông tin này khi người dùng hỏi về thời gian, ngày tháng, hoặc cần tính toán dựa trên thời gian.
+---
+"""
+    
+    parts = [time_context]
     if soul:
         parts.append(soul)
     if knowledge:
         parts.append(f"\n\n---\n\n{knowledge}")
+    
     return "\n".join(parts) if parts else BOT_PERSONALITY
 
 
@@ -180,6 +277,64 @@ async def generate_image_dalle(prompt: str) -> Optional[str]:
         return None
 
 
+def get_current_time_info(timezone: str = "Asia/Ho_Chi_Minh") -> str:
+    """Tool function: Lấy thông tin thời gian hiện tại."""
+    try:
+        tz = ZoneInfo(timezone)
+    except:
+        from datetime import timezone as tz_mod, timedelta
+        tz = tz_mod(timedelta(hours=7))
+    
+    now = datetime.now(tz)
+    
+    weekdays_vn = {
+        0: "Thứ Hai", 1: "Thứ Ba", 2: "Thứ Tư",
+        3: "Thứ Năm", 4: "Thứ Sáu", 5: "Thứ Bảy", 6: "Chủ Nhật"
+    }
+    
+    months_vn = {
+        1: "Giêng", 2: "Hai", 3: "Ba", 4: "Tư", 5: "Năm", 6: "Sáu",
+        7: "Bảy", 8: "Tám", 9: "Chín", 10: "Mười", 11: "Mười một", 12: "Mười hai"
+    }
+    
+    result = f"""Thời gian hiện tại:
+- Ngày giờ đầy đủ: {now.strftime('%d/%m/%Y %H:%M:%S')}
+- Thứ: {weekdays_vn[now.weekday()]}
+- Ngày: {now.day} tháng {months_vn[now.month]} năm {now.year}
+- Giờ: {now.hour} giờ {now.minute} phút {now.second} giây
+- Múi giờ: {timezone}
+- Timestamp: {int(now.timestamp())}"""
+    
+    return result
+
+
+def calculate_expression(expression: str) -> str:
+    """Tool function: Tính toán biểu thức toán học."""
+    try:
+        import math
+        # Whitelist các hàm an toàn
+        safe_dict = {
+            "sqrt": math.sqrt,
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "log": math.log,
+            "log10": math.log10,
+            "exp": math.exp,
+            "pi": math.pi,
+            "e": math.e,
+            "abs": abs,
+            "round": round,
+            "pow": pow,
+        }
+        
+        # Tính toán trong môi trường an toàn
+        result = eval(expression, {"__builtins__": {}}, safe_dict)
+        return f"Kết quả: {result}"
+    except Exception as e:
+        return f"Lỗi tính toán: {str(e)}"
+
+
 async def chat_with_ai(
     chat_id: int,
     user_id: int,
@@ -208,7 +363,7 @@ async def chat_with_ai(
 
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_MODEL,
             messages=messages,
             tools=TOOLS,
             tool_choice="auto",
@@ -217,7 +372,7 @@ async def chat_with_ai(
         )
 
         message = response.choices[0].message
-        max_tool_rounds = 2
+        max_tool_rounds = 3
         current_round = 0
 
         while message.tool_calls and current_round < max_tool_rounds:
@@ -228,10 +383,20 @@ async def chat_with_ai(
                 fn_name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
 
-                if fn_name == "search_web":
+                if fn_name == "get_current_time":
+                    timezone = args.get("timezone", "Asia/Ho_Chi_Minh")
+                    logger.info(f"🕐 Lấy thời gian: {timezone}")
+                    result = get_current_time_info(timezone)
+
+                elif fn_name == "search_web":
                     query = args.get("query", user_message)
                     logger.info(f"🔍 Tìm kiếm lần {current_round}: {query}")
                     result = await web_search(query, max_results=6)
+
+                elif fn_name == "calculate":
+                    expression = args.get("expression", "")
+                    logger.info(f"🧮 Tính toán: {expression}")
+                    result = calculate_expression(expression)
 
                 elif fn_name == "generate_image":
                     prompt = args.get("prompt", "")
@@ -252,7 +417,7 @@ async def chat_with_ai(
                 })
 
             next_response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=OPENAI_MODEL,
                 messages=messages,
                 tools=TOOLS,
                 tool_choice="auto",
@@ -306,7 +471,7 @@ async def chat_with_ai_vision(
 
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_MODEL,
             messages=messages,
             max_tokens=1024,
             temperature=0.8,
@@ -357,7 +522,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• /help – Xem hướng dẫn này\n"
         "• /about – Thông tin về bot\n\n"
         "*Khả năng đặc biệt:*\n"
+        "• 🕐 Biết thời gian thực (giờ, ngày, tháng, năm hiện tại)\n"
         "• 🔍 Tự tìm Google khi cần thông tin mới nhất\n"
+        "• 🧮 Tính toán toán học chính xác\n"
         "• 👁 Xem và phân tích ảnh bạn gửi\n"
         "• 🎬 Xem thumbnail video và mô tả\n"
         "• 🎨 Tạo ảnh AI theo yêu cầu (nhờ mình vẽ/tạo ảnh là được)\n"
@@ -373,7 +540,9 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"Mình là {BOT_NAME} – trợ lý AI được tạo ra bởi chị Nhi!\n\n"
         "💡 Mình có thể:\n"
         "• Trả lời câu hỏi, giải thích khái niệm\n"
+        "• 🕐 Biết thời gian thực (ngày giờ hiện tại)\n"
         "• 🔍 Tìm kiếm thông tin, tin tức mới nhất\n"
+        "• 🧮 Tính toán toán học chính xác\n"
         "• 👁 Xem và phân tích ảnh\n"
         "• 🎬 Xem và mô tả video (qua thumbnail)\n"
         "• 🎨 Tạo ảnh AI bằng DALL-E 3\n"
@@ -381,6 +550,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "• Lên kế hoạch, đưa ra lời khuyên\n"
         "• Dịch thuật, học ngoại ngữ\n"
         "• Trò chuyện và giải trí 😄\n\n"
+        f"🤖 Model: {OPENAI_MODEL}\n\n"
         "Cứ hỏi mình bất cứ điều gì bạn nhé!"
     )
     await update.message.reply_text(about_text, parse_mode="Markdown")
