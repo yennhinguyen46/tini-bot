@@ -75,31 +75,32 @@ TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": (
-                "Tìm kiếm thông tin trên internet KHI VÀ CHỈ KHI thực sự cần dữ liệu realtime. "
-                "CHỈ dùng cho: tin tức mới (trong vài ngày gần đây), giá cả/tỷ giá hiện tại, "
-                "thời tiết hôm nay, kết quả thể thao gần đây, sự kiện đang diễn ra. "
-                "KHÔNG dùng cho: kiến thức chung, lịch sử, khoa học, toán học, định nghĩa, "
-                "giải thích khái niệm, lập trình, ngôn ngữ. "
-                "LƯU Ý: Tìm kiếm có thể thất bại do mạng - nếu không cần thiết tuyệt đối thì "
-                "hãy trả lời từ kiến thức có sẵn thay vì tìm kiếm."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Từ khoá tìm kiếm bằng tiếng Việt hoặc tiếng Anh",
-                    }
-                },
-                "required": ["query"],
-            },
-        },
-    },
+    # Tạm thời tắt search_web do bị rate limit
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "search_web",
+    #         "description": (
+    #             "Tìm kiếm thông tin trên internet KHI VÀ CHỈ KHI thực sự cần dữ liệu realtime. "
+    #             "CHỈ dùng cho: tin tức mới (trong vài ngày gần đây), giá cả/tỷ giá hiện tại, "
+    #             "thời tiết hôm nay, kết quả thể thao gần đây, sự kiện đang diễn ra. "
+    #             "KHÔNG dùng cho: kiến thức chung, lịch sử, khoa học, toán học, định nghĩa, "
+    #             "giải thích khái niệm, lập trình, ngôn ngữ. "
+    #             "LƯU Ý: Tìm kiếm có thể thất bại do mạng - nếu không cần thiết tuyệt đối thì "
+    #             "hãy trả lời từ kiến thức có sẵn thay vì tìm kiếm."
+    #         ),
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "query": {
+    #                     "type": "string",
+    #                     "description": "Từ khoá tìm kiếm bằng tiếng Việt hoặc tiếng Anh",
+    #                 }
+    #             },
+    #             "required": ["query"],
+    #         },
+    #     },
+    # },
     {
         "type": "function",
         "function": {
@@ -203,6 +204,23 @@ THÔNG TIN THỜI GIAN HIỆN TẠI:
 - Múi giờ: {current_time['timezone']}
 
 Sử dụng thông tin này khi người dùng hỏi về thời gian, ngày tháng, hoặc cần tính toán dựa trên thời gian.
+---
+
+LƯU Ý QUAN TRỌNG:
+Tính năng tìm kiếm web đang TẠM THỜI BỊ VÔ HIỆU HÓA do vấn đề kỹ thuật (rate limit).
+
+Khi người dùng hỏi về thông tin REALTIME (giá vàng, tỷ giá, tin tức, thời tiết...):
+1. KHÔNG thử tìm kiếm (vì đã bị tắt)
+2. Thành thật nói với người dùng: "Em không tra được mạng lúc này do hệ thống Google đang giới hạn em"
+3. Hướng dẫn cách tra cứu:
+   - Giá vàng: "Chị Google 'giá vàng SJC hôm nay' hoặc vào sjc.com.vn / pnj.com.vn nha"
+   - Tỷ giá: "Chị tra trên Vietcombank.com.vn hoặc Google 'tỷ giá USD VND' nha"
+   - Tin tức: "Chị vào VnExpress.net hoặc Google keyword tin tức đó nha"
+   - Thời tiết: "Chị Google 'thời tiết [tên thành phố]' để xem dự báo nha"
+4. Có thể chia sẻ kiến thức CHUNG (không cụ thể) nếu có trong knowledge.md
+
+VÍ DỤ TRẢ LỜI TỐT:
+"Ủa em không tra được giá vàng lúc này do hệ thống Google đang giới hạn em rồi 😅 Chị Google 'giá vàng SJC hôm nay' hoặc vào trang sjc.com.vn để xem giá mới nhất nha. Thường giá vàng thay đổi nhiều lần trong ngày nên cần tra trực tiếp mới chính xác đó!"
 ---
 """
     
